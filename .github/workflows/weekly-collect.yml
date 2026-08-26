@@ -37,8 +37,8 @@ jobs:
         env:
           # This reads the secret you add in:
           # Repo -> Settings -> Secrets and variables -> Actions -> New repository secret
-          # Name it exactly DATAGOVSG_API_KEY.
-          DATAGOVSG_API_KEY: ${{ secrets.DATAGOVSG_API_KEY }}
+          # Name it exactly LTA_ACCOUNT_KEY (get one at datamall.lta.gov.sg).
+          LTA_ACCOUNT_KEY: ${{ secrets.LTA_ACCOUNT_KEY }}
         run: python collect_traffic_images.py
 
       - name: Commit and push collected images
