@@ -12,8 +12,14 @@ WHAT THIS SCRIPT DOES
    (so you have a queryable index for your FYP dataset, not just a folder
    of unlabelled JPEGs).
 
-HOW TO GET AN API KEY (one-time setup)
-----------------------------------------
+HOW TO GET AN API KEY (optional, but recommended)
+----------------------------------------------------
+data.gov.sg's APIs are public and work WITHOUT a key for testing — no key
+is required to run this script. A key only raises your rate limit and
+gets you priority support, which matters more once you're polling weekly
+over a full semester than during initial testing.
+
+If you want one:
 1. Go to https://data.gov.sg/ and click "Log in" (top right) to create a
    free account.
 2. Once logged in, go to your account/API settings page and generate an
@@ -24,7 +30,9 @@ HOW TO GET AN API KEY (one-time setup)
    macOS/Linux:   export DATAGOVSG_API_KEY="your_key_here"
    Windows (PowerShell): $env:DATAGOVSG_API_KEY="your_key_here"
 
-   Or, for a quick local test only, set DEFAULT_API_KEY below.
+If a key is set but data.gov.sg rejects it (403 Forbidden — usually a
+copy-paste issue with the key value), this script automatically retries
+the request without the key rather than failing the whole run.
 
 HOW TO SCHEDULE THIS TO RUN WEEKLY
 ------------------------------------
@@ -85,20 +93,20 @@ class Config:
 
 
 def load_config() -> Config:
-    """Reads the API key from the environment. Fails fast with a clear
-    message if it's missing, instead of failing deep inside a request."""
+    """Reads the API key from the environment, if present.
+
+    NOTE: data.gov.sg's own docs state their APIs are public and work
+    without a key for testing purposes — a key only grants higher rate
+    limits and priority support. So a missing key is NOT a fatal error
+    here; it's only a problem if a key is set but invalid, which shows up
+    as a 403 from the API itself (handled in fetch_camera_snapshot).
+    """
     api_key = os.environ.get("DATAGOVSG_API_KEY", "").strip()
 
     # Uncomment the line below ONLY for quick local testing.
     # Do not commit a real key to source control.
-    api_key = api_key or "PASTE_YOUR_KEY_HERE_FOR_TESTING_ONLY"
+    # api_key = api_key or "PASTE_YOUR_KEY_HERE_FOR_TESTING_ONLY"
 
-    if not api_key:
-        sys.exit(
-            "ERROR: No API key found.\n"
-            "Set the DATAGOVSG_API_KEY environment variable before running.\n"
-            "See the module docstring at the top of this file for setup steps."
-        )
     return Config(api_key=api_key)
 
 
@@ -132,7 +140,8 @@ def build_session(config: Config) -> requests.Session:
     )
     adapter = HTTPAdapter(max_retries=retry_strategy)
     session.mount("https://", adapter)
-    session.headers.update({"x-api-key": config.api_key})
+    if config.api_key:
+        session.headers.update({"x-api-key": config.api_key})
     return session
 
 
@@ -145,6 +154,23 @@ def fetch_camera_snapshot(session: requests.Session, config: Config, logger: log
     camera records for the current snapshot."""
     logger.info("Requesting current traffic camera snapshot...")
     response = session.get(config.api_url, timeout=config.request_timeout_seconds)
+
+    if response.status_code == 403 and "x-api-key" in session.headers:
+        # A 403 with a key attached almost always means the key VALUE is
+        # wrong (typo, stray whitespace, a key that hasn't finished
+        # activating) rather than a missing key. data.gov.sg explicitly
+        # supports unauthenticated access for testing, so retry without
+        # the key instead of failing the whole run.
+        logger.warning(
+            "Got 403 Forbidden with an API key attached — the key may be "
+            "invalid. Retrying without it, since data.gov.sg allows "
+            "unauthenticated access for testing. If this succeeds, "
+            "double-check the DATAGOVSG_API_KEY secret value (no extra "
+            "quotes/whitespace) or regenerate it on data.gov.sg."
+        )
+        session.headers.pop("x-api-key", None)
+        response = session.get(config.api_url, timeout=config.request_timeout_seconds)
+
     response.raise_for_status()
     payload = response.json()
 
