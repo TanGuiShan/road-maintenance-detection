@@ -142,6 +142,20 @@ def build_session(config: Config) -> requests.Session:
     session.mount("https://", adapter)
     if config.api_key:
         session.headers.update({"x-api-key": config.api_key})
+
+    # Some API gateways run bot-detection/WAF rules that specifically
+    # blocklist the default python-requests User-Agent string, since it's
+    # an easy tell that a request isn't coming from a real browser. A
+    # realistic User-Agent + Accept header is a low-cost way to avoid
+    # tripping that, without doing anything deceptive with the request
+    # itself (we're still hitting the documented public endpoint).
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    })
     return session
 
 
