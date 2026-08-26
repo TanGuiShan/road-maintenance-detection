@@ -1,0 +1,52 @@
+name: Weekly Traffic Image Collection
+
+# WHEN THIS RUNS
+# ----------------
+# - schedule: every Monday at 09:00 Singapore Time (SGT = UTC+8).
+#   GitHub Actions cron always runs in UTC, so 09:00 SGT = 01:00 UTC.
+#   Note: GitHub does not guarantee the exact minute during high load —
+#   a delay of up to ~15-20 minutes is normal and fine for a weekly job.
+# - workflow_dispatch: lets you trigger a run manually from the "Actions"
+#   tab on GitHub, which is useful for testing before you trust the schedule.
+on:
+  schedule:
+    - cron: '0 1 * * 1'
+  workflow_dispatch:
+
+# "contents: write" is required so the job can commit the downloaded
+# images and manifest.csv back into this repository.
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run collector
+        env:
+          # This reads the secret you add in:
+          # Repo -> Settings -> Secrets and variables -> Actions -> New repository secret
+          # Name it exactly DATAGOVSG_API_KEY.
+          DATAGOVSG_API_KEY: ${{ secrets.DATAGOVSG_API_KEY }}
+        run: python collect_traffic_images.py
+
+      - name: Commit and push collected images
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add traffic_images/
+          # Only commit if the collector actually produced new/changed files —
+          # avoids empty commits if a run finds nothing new.
+          git diff --staged --quiet || git commit -m "Weekly traffic image collection: $(date -u +'%Y-%m-%d')"
+          git push
