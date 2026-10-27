@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Road Marking Labeler</title>
+<style>
+  :root {
+    --bg: #1a1d23;
+    --panel: #23262e;
+    --accent: #4f8cff;
+    --accent2: #ff5c5c;
+    --text: #e6e8eb;
+    --muted: #9aa0ab;
+    --border: #33373f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+  #sidebar {
+    width: 300px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    overflow-y: auto;
+    flex-shrink: 0;
+  }
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 16px;
+    overflow: auto;
+  }
+  h1 { font-size: 16px; margin: 0 0 12px 0; }
+  h2 { font-size: 13px; color: var(--muted); margin: 16px 0 8px 0; text-transform: uppercase; letter-spacing: 0.05em; }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 9px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    margin-bottom: 8px;
+    width: 100%;
+  }
+  button:hover { opacity: 0.9; }
+  button.secondary { background: var(--border); color: var(--text); }
+  button.danger { background: var(--accent2); }
+  input[type=file] {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 8px;
+    width: 100%;
+  }
+  #imageList {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 13px;
+  }
+  #imageList li {
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted);
+  }
+  #imageList li:hover { background: var(--border); }
+  #imageList li.active { background: var(--accent); color: white; }
+  #imageList li .count { font-size: 11px; opacity: 0.8; }
+  .no-marking-tag { color: var(--accent2); font-weight: 600; }
+  #canvasWrap {
+    position: relative;
+    border: 1px solid var(--border);
+    line-height: 0;
+    max-width: 100%;
+  }
+  canvas { display: block; max-width: 100%; cursor: crosshair; }
+  #topBar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    align-items: center;
+    width: 100%;
+    max-width: 900px;
+  }
+  #topBar .filename { font-size: 13px; color: var(--muted); flex: 1; }
+  #boxList {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  #boxList div { display: flex; justify-content: space-between; padding: 3px 0; }
+  #boxList button { width: auto; padding: 2px 8px; font-size: 11px; margin: 0; }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.5; margin-top: 4px; }
+  .stat { font-size: 24px; font-weight: 600; }
+  .statlabel { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+  #noMarkingBtn.active { background: var(--accent2); }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>Road Marking Labeler</h1>
+  <div class="hint">Draws boxes = "a marking is here." Doesn't judge condition — that's a later step.</div>
+
+  <h2>1. Load images</h2>
+  <input type="file" id="fileInput" multiple accept="image/*">
+
+  <h2>2. Progress</h2>
+  <div style="display:flex; gap:16px; margin-bottom: 8px;">
+    <div><div class="stat" id="statLabeled">0</div><div class="statlabel">labeled</div></div>
+    <div><div class="stat" id="statTotal">0</div><div class="statlabel">total</div></div>
+    <div><div class="stat" id="statBoxes">0</div><div class="statlabel">boxes</div></div>
+  </div>
+
+  <h2>3. Images</h2>
+  <ul id="imageList"></ul>
+
+  <h2>4. Export</h2>
+  <button id="exportBtn">Export labels.csv</button>
+  <div class="hint">One row per box: filename, x, y, width, height (original image pixels), plus one row per image with no markings.</div>
+</div>
+
+<div id="main">
+  <div id="topBar">
+    <button class="secondary" id="prevBtn" style="width:auto;">&larr; Prev</button>
+    <div class="filename" id="currentFilename">No image loaded</div>
+    <button id="noMarkingBtn" class="secondary" style="width:auto;">No marking in this image</button>
+    <button class="secondary" id="nextBtn" style="width:auto;">Next &rarr;</button>
+  </div>
+  <div id="canvasWrap">
+    <canvas id="canvas"></canvas>
+  </div>
+  <div class="hint">Click and drag to draw a box around each visible road marking. Draw as many as needed per image. Click a box in the list below to delete it.</div>
+  <div id="boxList"></div>
+</div>
+
+<script>
+const fileInput = document.getElementById('fileInput');
+const imageList = document.getElementById('imageList');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const currentFilename = document.getElementById('currentFilename');
+const boxListDiv = document.getElementById('boxList');
+const noMarkingBtn = document.getElementById('noMarkingBtn');
+
+let images = [];       // {name, url, img, boxes: [{x,y,w,h}], noMarking: bool}
+let currentIndex = -1;
+let drawing = false;
+let startX, startY;
+let scale = 1;
+
+fileInput.addEventListener('change', (e) => {
+  const files = Array.from(e.target.files);
+  files.forEach(file => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      images.push({ name: file.name, url, img, boxes: [], noMarking: false });
+      renderImageList();
+      if (currentIndex === -1) selectImage(0);
+      updateStats();
+    };
+    img.src = url;
+  });
+});
+
+function renderImageList() {
+  imageList.innerHTML = '';
+  images.forEach((im, i) => {
+    const li = document.createElement('li');
+    li.className = i === currentIndex ? 'active' : '';
+    const label = im.noMarking ? '<span class="no-marking-tag">none</span>' : `${im.boxes.length} box${im.boxes.length !== 1 ? 'es' : ''}`;
+    li.innerHTML = `<span>${im.name}</span><span class="count">${label}</span>`;
+    li.onclick = () => selectImage(i);
+    imageList.appendChild(li);
+  });
+}
+
+function selectImage(i) {
+  currentIndex = i;
+  const im = images[i];
+  currentFilename.textContent = im.name;
+  noMarkingBtn.classList.toggle('active', im.noMarking);
+
+  // Fit canvas to image, capped for display, but track scale to store
+  // annotations in ORIGINAL image pixel coordinates.
+  const maxDisplayWidth = 860;
+  scale = Math.min(1, maxDisplayWidth / im.img.width);
+  canvas.width = im.img.width * scale;
+  canvas.height = im.img.height * scale;
+
+  redraw();
+  renderImageList();
+  renderBoxList();
+}
+
+function redraw() {
+  if (currentIndex === -1) return;
+  const im = images[currentIndex];
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(im.img, 0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = '#4f8cff';
+  ctx.lineWidth = 2;
+  im.boxes.forEach(b => {
+    ctx.strokeRect(b.x * scale, b.y * scale, b.w * scale, b.h * scale);
+  });
+}
+
+canvas.addEventListener('mousedown', (e) => {
+  if (currentIndex === -1) return;
+  const rect = canvas.getBoundingClientRect();
+  startX = (e.clientX - rect.left) * (canvas.width / rect.width);
+  startY = (e.clientY - rect.top) * (canvas.height / rect.height);
+  drawing = true;
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!drawing) return;
+  const rect = canvas.getBoundingClientRect();
+  const curX = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const curY = (e.clientY - rect.top) * (canvas.height / rect.height);
+  redraw();
+  ctx.strokeStyle = '#ff5c5c';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(Math.min(startX, curX), Math.min(startY, curY), Math.abs(curX - startX), Math.abs(curY - startY));
+});
+
+canvas.addEventListener('mouseup', (e) => {
+  if (!drawing || currentIndex === -1) return;
+  drawing = false;
+  const rect = canvas.getBoundingClientRect();
+  const endX = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const endY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+  const x = Math.min(startX, endX) / scale;
+  const y = Math.min(startY, endY) / scale;
+  const w = Math.abs(endX - startX) / scale;
+  const h = Math.abs(endY - startY) / scale;
+
+  if (w > 4 && h > 4) {
+    images[currentIndex].boxes.push({ x, y, w, h });
+    images[currentIndex].noMarking = false;
+    noMarkingBtn.classList.remove('active');
+  }
+  redraw();
+  renderImageList();
+  renderBoxList();
+  updateStats();
+});
+
+function renderBoxList() {
+  boxListDiv.innerHTML = '';
+  if (currentIndex === -1) return;
+  const im = images[currentIndex];
+  im.boxes.forEach((b, idx) => {
+    const div = document.createElement('div');
+    div.innerHTML = `<span>Box ${idx + 1}: x=${Math.round(b.x)}, y=${Math.round(b.y)}, w=${Math.round(b.w)}, h=${Math.round(b.h)}</span>`;
+    const delBtn = document.createElement('button');
+    delBtn.textContent = 'Delete';
+    delBtn.className = 'danger';
+    delBtn.onclick = () => {
+      im.boxes.splice(idx, 1);
+      redraw();
+      renderBoxList();
+      renderImageList();
+      updateStats();
+    };
+    div.appendChild(delBtn);
+    boxListDiv.appendChild(div);
+  });
+}
+
+noMarkingBtn.addEventListener('click', () => {
+  if (currentIndex === -1) return;
+  const im = images[currentIndex];
+  im.noMarking = !im.noMarking;
+  if (im.noMarking) im.boxes = [];
+  noMarkingBtn.classList.toggle('active', im.noMarking);
+  redraw();
+  renderImageList();
+  renderBoxList();
+  updateStats();
+});
+
+document.getElementById('prevBtn').addEventListener('click', () => {
+  if (currentIndex > 0) selectImage(currentIndex - 1);
+});
+document.getElementById('nextBtn').addEventListener('click', () => {
+  if (currentIndex < images.length - 1) selectImage(currentIndex + 1);
+});
+
+function updateStats() {
+  document.getElementById('statTotal').textContent = images.length;
+  const labeled = images.filter(im => im.boxes.length > 0 || im.noMarking).length;
+  document.getElementById('statLabeled').textContent = labeled;
+  const totalBoxes = images.reduce((sum, im) => sum + im.boxes.length, 0);
+  document.getElementById('statBoxes').textContent = totalBoxes;
+}
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  let rows = [['filename', 'x', 'y', 'width', 'height', 'no_marking']];
+  images.forEach(im => {
+    if (im.noMarking) {
+      rows.push([im.name, '', '', '', '', 'TRUE']);
+    } else if (im.boxes.length === 0) {
+      rows.push([im.name, '', '', '', '', '']); // not yet labeled
+    } else {
+      im.boxes.forEach(b => {
+        rows.push([im.name, Math.round(b.x), Math.round(b.y), Math.round(b.w), Math.round(b.h), 'FALSE']);
+      });
+    }
+  });
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'labels.csv';
+  a.click();
+});
+</script>
+
+</body>
+</html>

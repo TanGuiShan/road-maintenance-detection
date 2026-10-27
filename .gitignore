@@ -1,0 +1,16 @@
+# Test results and picture output from video_score.py
+results*/
+
+# Big data stays on the laptop, not in GitHub
+frames/
+fyp_data/
+*.mp4
+*.mov
+*.mkv
+
+# Python junk
+__pycache__/
+*.pyc
+
+# Secrets: never commit your API key
+.env
